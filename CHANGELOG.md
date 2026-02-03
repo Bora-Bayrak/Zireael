@@ -4,6 +4,11 @@ This project follows Semantic Versioning.
 
 ## Unreleased
 
+### Added
+
+- engine: debug trace system (`engine_debug_*`) for capturing and querying diagnostic records (frames, drawlists, and optional drawlist byte capture) via a bounded ring buffer.
+- engine: bump Engine ABI pins to `1.1.0` for the new debug API surface (wrappers must request the updated ABI in `zr_engine_config_t`).
+
 ## 1.1.1-rc4 — 2026-02-03
 
 ### Fixed
