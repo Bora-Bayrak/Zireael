@@ -29,9 +29,7 @@ static zr_result_t test_trace_init(zr_debug_trace_t* t, const zr_debug_config_t*
   memset(g_record_offsets, 0, sizeof(g_record_offsets));
   memset(g_record_sizes, 0, sizeof(g_record_sizes));
 
-  return zr_debug_trace_init(t, config,
-                             g_ring_buf, TEST_RING_BUF_SIZE,
-                             g_record_offsets, g_record_sizes,
+  return zr_debug_trace_init(t, config, g_ring_buf, TEST_RING_BUF_SIZE, g_record_offsets, g_record_sizes,
                              TEST_INDEX_CAP);
 }
 
@@ -251,7 +249,8 @@ ZR_TEST(unit_debug_trace_index_overflow_without_byte_overflow) {
   cfg.enabled = 1u;
   cfg.min_severity = ZR_DEBUG_SEV_TRACE;
 
-  zr_result_t rc = zr_debug_trace_init(&t, &cfg, ring_buf, sizeof(ring_buf), record_offsets, record_sizes, SMALL_INDEX_CAP);
+  zr_result_t rc =
+      zr_debug_trace_init(&t, &cfg, ring_buf, sizeof(ring_buf), record_offsets, record_sizes, SMALL_INDEX_CAP);
   ZR_ASSERT_EQ_U32(rc, ZR_OK);
 
   zr_debug_trace_set_start_time(&t, 0u);
@@ -297,7 +296,8 @@ ZR_TEST(unit_debug_trace_index_overflow_without_byte_overflow) {
   /* Oldest returned record should still be fetchable. */
   zr_debug_perf_record_t payload;
   uint32_t payload_size = 0u;
-  rc = zr_debug_trace_get_payload(&t, headers[result.records_returned - 1u].record_id, &payload, sizeof(payload), &payload_size);
+  rc = zr_debug_trace_get_payload(&t, headers[result.records_returned - 1u].record_id, &payload, sizeof(payload),
+                                  &payload_size);
   ZR_ASSERT_EQ_U32(rc, ZR_OK);
   ZR_ASSERT_EQ_U32(payload_size, (uint32_t)sizeof(zr_debug_perf_record_t));
 }
@@ -337,6 +337,30 @@ ZR_TEST(unit_debug_trace_query_filter_frame) {
   rc = zr_debug_trace_query(&t, &query, headers, 10u, &result);
   ZR_ASSERT_EQ_U32(rc, ZR_OK);
   ZR_ASSERT_EQ_U32(result.records_available, 3u);
+}
+
+ZR_TEST(unit_debug_trace_query_saturates_records_dropped_u32) {
+  (void)ctx;
+  zr_debug_trace_t t;
+  zr_debug_config_t cfg = zr_debug_config_default();
+  cfg.enabled = 1u;
+  cfg.min_severity = ZR_DEBUG_SEV_TRACE;
+
+  zr_result_t rc = test_trace_init(&t, &cfg);
+  ZR_ASSERT_EQ_U32(rc, ZR_OK);
+
+  t.total_dropped = UINT64_MAX;
+
+  zr_debug_query_t query;
+  memset(&query, 0, sizeof(query));
+  query.category_mask = 0xFFFFFFFFu;
+  query.max_records = 1u;
+
+  zr_debug_record_header_t headers[1];
+  zr_debug_query_result_t result;
+  rc = zr_debug_trace_query(&t, &query, headers, 1u, &result);
+  ZR_ASSERT_EQ_U32(rc, ZR_OK);
+  ZR_ASSERT_EQ_U32(result.records_dropped, UINT32_MAX);
 }
 
 ZR_TEST(unit_debug_trace_reset) {
