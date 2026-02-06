@@ -28,6 +28,10 @@ static const uint8_t ZR_WIN32_SEQ_BRACKETED_PASTE_ENABLE[] = "\x1b[?2004h";
 static const uint8_t ZR_WIN32_SEQ_BRACKETED_PASTE_DISABLE[] = "\x1b[?2004l";
 static const uint8_t ZR_WIN32_SEQ_MOUSE_ENABLE[] = "\x1b[?1000h\x1b[?1006h";
 static const uint8_t ZR_WIN32_SEQ_MOUSE_DISABLE[] = "\x1b[?1006l\x1b[?1000l";
+static const uint32_t ZR_WIN32_UTF16_HIGH_SURROGATE_MIN = 0xD800u;
+static const uint32_t ZR_WIN32_UTF16_HIGH_SURROGATE_MAX = 0xDBFFu;
+static const uint32_t ZR_WIN32_UTF16_LOW_SURROGATE_MIN = 0xDC00u;
+static const uint32_t ZR_WIN32_UTF16_LOW_SURROGATE_MAX = 0xDFFFu;
 
 zr_result_t zr_plat_win32_create(plat_t** out_plat, const plat_config_t* cfg);
 
@@ -45,12 +49,14 @@ struct plat_t {
   plat_size_t last_size;
 
   plat_config_t cfg;
-  plat_caps_t   caps;
+  plat_caps_t caps;
 
-  bool    modes_valid;
-  bool    cp_valid;
-  bool    raw_active;
-  uint8_t _pad[5];
+  bool modes_valid;
+  bool cp_valid;
+  bool raw_active;
+  bool has_pending_high_surrogate;
+  uint16_t pending_high_surrogate;
+  uint8_t _pad[2];
 };
 
 static void zr_win32_emit_repeat(uint8_t* out_buf, size_t out_cap, size_t* io_len, const uint8_t* seq, size_t seq_len,
@@ -71,6 +77,68 @@ static void zr_win32_emit_repeat(uint8_t* out_buf, size_t out_cap, size_t* io_le
     memcpy(out_buf + *io_len, seq, seq_len);
     *io_len += seq_len;
   }
+}
+
+static size_t zr_win32_encode_utf8_scalar(uint32_t scalar, uint8_t out[4]) {
+  if (!out) {
+    return 0u;
+  }
+
+  if (scalar > 0x10FFFFu || (scalar >= 0xD800u && scalar <= 0xDFFFu)) {
+    scalar = 0xFFFDu;
+  }
+
+  if (scalar <= 0x7Fu) {
+    out[0] = (uint8_t)scalar;
+    return 1u;
+  }
+  if (scalar <= 0x7FFu) {
+    out[0] = (uint8_t)(0xC0u | ((scalar >> 6u) & 0x1Fu));
+    out[1] = (uint8_t)(0x80u | (scalar & 0x3Fu));
+    return 2u;
+  }
+  if (scalar <= 0xFFFFu) {
+    out[0] = (uint8_t)(0xE0u | ((scalar >> 12u) & 0x0Fu));
+    out[1] = (uint8_t)(0x80u | ((scalar >> 6u) & 0x3Fu));
+    out[2] = (uint8_t)(0x80u | (scalar & 0x3Fu));
+    return 3u;
+  }
+
+  out[0] = (uint8_t)(0xF0u | ((scalar >> 18u) & 0x07u));
+  out[1] = (uint8_t)(0x80u | ((scalar >> 12u) & 0x3Fu));
+  out[2] = (uint8_t)(0x80u | ((scalar >> 6u) & 0x3Fu));
+  out[3] = (uint8_t)(0x80u | (scalar & 0x3Fu));
+  return 4u;
+}
+
+static bool zr_win32_is_high_surrogate(uint32_t scalar) {
+  return scalar >= ZR_WIN32_UTF16_HIGH_SURROGATE_MIN && scalar <= ZR_WIN32_UTF16_HIGH_SURROGATE_MAX;
+}
+
+static bool zr_win32_is_low_surrogate(uint32_t scalar) {
+  return scalar >= ZR_WIN32_UTF16_LOW_SURROGATE_MIN && scalar <= ZR_WIN32_UTF16_LOW_SURROGATE_MAX;
+}
+
+static uint32_t zr_win32_decode_surrogate_pair(uint32_t high, uint32_t low) {
+  const uint32_t hi10 = high - ZR_WIN32_UTF16_HIGH_SURROGATE_MIN;
+  const uint32_t lo10 = low - ZR_WIN32_UTF16_LOW_SURROGATE_MIN;
+  return 0x10000u + (hi10 << 10u) + lo10;
+}
+
+static void zr_win32_emit_utf8_scalar_repeat(uint8_t* out_buf, size_t out_cap, size_t* io_len, uint32_t scalar,
+                                             WORD repeat) {
+  uint8_t utf8[4];
+  const size_t n = zr_win32_encode_utf8_scalar(scalar, utf8);
+  zr_win32_emit_repeat(out_buf, out_cap, io_len, utf8, n, repeat);
+}
+
+static void zr_win32_flush_pending_high_surrogate(plat_t* plat, uint8_t* out_buf, size_t out_cap, size_t* io_len) {
+  if (!plat || !plat->has_pending_high_surrogate) {
+    return;
+  }
+  zr_win32_emit_utf8_scalar_repeat(out_buf, out_cap, io_len, 0xFFFDu, 1u);
+  plat->has_pending_high_surrogate = false;
+  plat->pending_high_surrogate = 0u;
 }
 
 static zr_result_t zr_win32_write_all(HANDLE h_out, const uint8_t* bytes, int32_t len) {
@@ -194,7 +262,8 @@ static zr_result_t zr_win32_enable_vt_or_fail(plat_t* plat) {
     line buffering; otherwise, input may not be delivered until Enter.
   */
   DWORD candidates[4];
-  candidates[0] = in_mode_base & ~((DWORD)(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT | ENABLE_WINDOW_INPUT));
+  candidates[0] =
+      in_mode_base & ~((DWORD)(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT | ENABLE_WINDOW_INPUT));
   candidates[1] = in_mode_base & ~((DWORD)(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_WINDOW_INPUT));
   candidates[2] = in_mode_base & ~((DWORD)(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT));
   candidates[3] = in_mode_base;
@@ -238,7 +307,8 @@ static void zr_win32_emit_enter_sequences_best_effort(plat_t* plat) {
   (void)zr_win32_write_cstr(plat->h_out, ZR_WIN32_SEQ_WRAP_ENABLE, sizeof(ZR_WIN32_SEQ_WRAP_ENABLE));
 
   if (plat->cfg.enable_bracketed_paste && plat->caps.supports_bracketed_paste) {
-    (void)zr_win32_write_cstr(plat->h_out, ZR_WIN32_SEQ_BRACKETED_PASTE_ENABLE, sizeof(ZR_WIN32_SEQ_BRACKETED_PASTE_ENABLE));
+    (void)zr_win32_write_cstr(plat->h_out, ZR_WIN32_SEQ_BRACKETED_PASTE_ENABLE,
+                              sizeof(ZR_WIN32_SEQ_BRACKETED_PASTE_ENABLE));
   }
   if (plat->cfg.enable_mouse && plat->caps.supports_mouse) {
     (void)zr_win32_write_cstr(plat->h_out, ZR_WIN32_SEQ_MOUSE_ENABLE, sizeof(ZR_WIN32_SEQ_MOUSE_ENABLE));
@@ -257,7 +327,8 @@ static void zr_win32_emit_leave_sequences_best_effort(plat_t* plat) {
     (void)zr_win32_write_cstr(plat->h_out, ZR_WIN32_SEQ_MOUSE_DISABLE, sizeof(ZR_WIN32_SEQ_MOUSE_DISABLE));
   }
   if (plat->cfg.enable_bracketed_paste && plat->caps.supports_bracketed_paste) {
-    (void)zr_win32_write_cstr(plat->h_out, ZR_WIN32_SEQ_BRACKETED_PASTE_DISABLE, sizeof(ZR_WIN32_SEQ_BRACKETED_PASTE_DISABLE));
+    (void)zr_win32_write_cstr(plat->h_out, ZR_WIN32_SEQ_BRACKETED_PASTE_DISABLE,
+                              sizeof(ZR_WIN32_SEQ_BRACKETED_PASTE_DISABLE));
   }
 
   (void)zr_win32_write_cstr(plat->h_out, ZR_WIN32_SEQ_WRAP_ENABLE, sizeof(ZR_WIN32_SEQ_WRAP_ENABLE));
@@ -306,6 +377,8 @@ zr_result_t zr_plat_win32_create(plat_t** out_plat, const plat_config_t* cfg) {
   plat->out_mode_orig = 0u;
   plat->modes_valid = false;
   plat->raw_active = false;
+  plat->has_pending_high_surrogate = false;
+  plat->pending_high_surrogate = 0u;
   plat->last_size.cols = 0u;
   plat->last_size.rows = 0u;
 
@@ -327,7 +400,8 @@ zr_result_t zr_plat_win32_create(plat_t** out_plat, const plat_config_t* cfg) {
   plat->caps.color_mode = cfg->requested_color_mode;
   plat->caps.supports_mouse = 1u;
   plat->caps.supports_bracketed_paste = 1u;
-  plat->caps.supports_focus_events = 1u;
+  /* Focus in/out bytes are not normalized by the core parser in v1. */
+  plat->caps.supports_focus_events = 0u;
   plat->caps.supports_osc52 = 1u;
   plat->caps.supports_sync_update = 1u;
   plat->caps.supports_scroll_region = 1u;
@@ -500,59 +574,80 @@ int32_t plat_read_input(plat_t* plat, uint8_t* out_buf, int32_t out_cap) {
       const WORD repeat = k->wRepeatCount;
 
       if (vk == VK_UP) {
+        zr_win32_flush_pending_high_surrogate(plat, out_buf, out_cap_z, &out_len);
         const uint8_t seq[] = {0x1Bu, (uint8_t)'[', (uint8_t)'A'};
         zr_win32_emit_repeat(out_buf, out_cap_z, &out_len, seq, sizeof(seq), repeat);
         continue;
       }
       if (vk == VK_DOWN) {
+        zr_win32_flush_pending_high_surrogate(plat, out_buf, out_cap_z, &out_len);
         const uint8_t seq[] = {0x1Bu, (uint8_t)'[', (uint8_t)'B'};
         zr_win32_emit_repeat(out_buf, out_cap_z, &out_len, seq, sizeof(seq), repeat);
         continue;
       }
       if (vk == VK_RIGHT) {
+        zr_win32_flush_pending_high_surrogate(plat, out_buf, out_cap_z, &out_len);
         const uint8_t seq[] = {0x1Bu, (uint8_t)'[', (uint8_t)'C'};
         zr_win32_emit_repeat(out_buf, out_cap_z, &out_len, seq, sizeof(seq), repeat);
         continue;
       }
       if (vk == VK_LEFT) {
+        zr_win32_flush_pending_high_surrogate(plat, out_buf, out_cap_z, &out_len);
         const uint8_t seq[] = {0x1Bu, (uint8_t)'[', (uint8_t)'D'};
         zr_win32_emit_repeat(out_buf, out_cap_z, &out_len, seq, sizeof(seq), repeat);
         continue;
       }
       if (vk == VK_RETURN) {
+        zr_win32_flush_pending_high_surrogate(plat, out_buf, out_cap_z, &out_len);
         const uint8_t seq[] = {(uint8_t)'\r'};
         zr_win32_emit_repeat(out_buf, out_cap_z, &out_len, seq, sizeof(seq), repeat);
         continue;
       }
       if (vk == VK_ESCAPE) {
+        zr_win32_flush_pending_high_surrogate(plat, out_buf, out_cap_z, &out_len);
         const uint8_t seq[] = {0x1Bu};
         zr_win32_emit_repeat(out_buf, out_cap_z, &out_len, seq, sizeof(seq), repeat);
         continue;
       }
       if (vk == VK_TAB) {
+        zr_win32_flush_pending_high_surrogate(plat, out_buf, out_cap_z, &out_len);
         const uint8_t seq[] = {(uint8_t)'\t'};
         zr_win32_emit_repeat(out_buf, out_cap_z, &out_len, seq, sizeof(seq), repeat);
         continue;
       }
       if (vk == VK_BACK) {
+        zr_win32_flush_pending_high_surrogate(plat, out_buf, out_cap_z, &out_len);
         const uint8_t seq[] = {0x7Fu};
         zr_win32_emit_repeat(out_buf, out_cap_z, &out_len, seq, sizeof(seq), repeat);
         continue;
       }
 
       if (ch == 0) {
+        zr_win32_flush_pending_high_surrogate(plat, out_buf, out_cap_z, &out_len);
         continue;
       }
 
-      /*
-        The core input parser is currently byte-oriented (no UTF-8 decode).
-        Emit ASCII only; ignore non-ASCII so we don't generate spurious multi-byte
-        "text events" for a single key press.
-      */
-      if (ch <= 0x7Fu && out_len + 1u <= out_cap_z) {
-        const uint8_t seq[] = {(uint8_t)ch};
-        zr_win32_emit_repeat(out_buf, out_cap_z, &out_len, seq, sizeof(seq), repeat);
+      if (zr_win32_is_high_surrogate((uint32_t)ch)) {
+        zr_win32_flush_pending_high_surrogate(plat, out_buf, out_cap_z, &out_len);
+        plat->has_pending_high_surrogate = true;
+        plat->pending_high_surrogate = (uint16_t)ch;
+        continue;
       }
+
+      if (zr_win32_is_low_surrogate((uint32_t)ch)) {
+        if (plat->has_pending_high_surrogate) {
+          const uint32_t scalar = zr_win32_decode_surrogate_pair((uint32_t)plat->pending_high_surrogate, (uint32_t)ch);
+          plat->has_pending_high_surrogate = false;
+          plat->pending_high_surrogate = 0u;
+          zr_win32_emit_utf8_scalar_repeat(out_buf, out_cap_z, &out_len, scalar, repeat);
+          continue;
+        }
+        zr_win32_emit_utf8_scalar_repeat(out_buf, out_cap_z, &out_len, 0xFFFDu, repeat);
+        continue;
+      }
+
+      zr_win32_flush_pending_high_surrogate(plat, out_buf, out_cap_z, &out_len);
+      zr_win32_emit_utf8_scalar_repeat(out_buf, out_cap_z, &out_len, (uint32_t)ch, repeat);
     }
 
     if (out_len > (size_t)INT32_MAX) {
